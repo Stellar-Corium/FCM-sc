@@ -1,0 +1,14 @@
+name: Build and Release Reactor contract
+on:
+  workflow_dispatch:
+
+jobs:
+  release-reactor:
+    uses: stellar-expert/soroban-build-workflow/.github/workflows/release.yml@4d0117fd348fb90cc36e2cd8c774f822802752af
+    with:
+      release_name: ${{ github.ref_name }}
+      release_description: 'Reactor contract'
+      relative_path: '["contracts/reactor"]'
+      package: 'reactor'
+    secrets:
+      release_token: ${{ secrets.RELEASE_TOKEN }}

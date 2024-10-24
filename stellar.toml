@@ -1,0 +1,12 @@
+[DOCUMENTATION]
+ORG_NAME = "Stellar Corium"
+ORG_LOGO = "https://github.com/Stellar-Corium/FCM-sc/blob/main/assets/FCM.png?raw=true"
+ORG_GITHUB = "https://github.com/Stellar-Corium"
+ORG_DESCRIPTION = "Stellar Corium is the enterprise in charge of harnessing Corium from failed nuclear plants and converting them into FCM, the first Proof-or-Work asset on Stellar."
+
+[[CURRENCIES]]
+code = "FCM"
+issuer = "GD765M4FIG4C4CGWUFDPD2QCWKISYRLBRIYMLSILCCTPY7DEGGUKPFBE"
+name = "Fuel-Containing Material"
+desc = "The first Proof-of-Work Stellar Asset powered by a Soroban Smart Contract."
+image = "https://github.com/Stellar-Corium/FCM-sc/blob/main/assets/FCM.png?raw=true"

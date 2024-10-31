@@ -4,12 +4,14 @@ use crate::contract::create_block_hash;
 use crate::errors::ContractErrors;
 use crate::storage::{get_block, get_state, set_state, Block, ReactorState};
 use crate::tests::test_utils::{create_test_data, start_contract, TestData};
-use soroban_sdk::testutils::{Address as _, BytesN as __, MockAuth, MockAuthInvoke};
+use soroban_sdk::testutils::{Address as _, BytesN as __, Ledger, MockAuth, MockAuthInvoke};
 use soroban_sdk::{Address, BytesN, Env, IntoVal, String};
 
 #[test]
 fn test_mining_a_block() {
     let e: Env = Env::default();
+    e.ledger().set_timestamp(60);
+
     let test_data: TestData = create_test_data(&e);
     start_contract(&e, &test_data);
 
@@ -35,6 +37,8 @@ fn test_mining_a_block() {
         0
     );
 
+    e.ledger().set_timestamp(3660);
+
     test_data
         .contract_client
         .mock_auths(&[MockAuth {
@@ -51,13 +55,32 @@ fn test_mining_a_block() {
     e.as_contract(&test_data.contract_client.address, || {
         let state: ReactorState = get_state(&e).unwrap();
         assert_eq!(state.current, 1);
-        assert_eq!(state.difficulty, 1);
+        assert_eq!(state.difficulty, 0);
     });
 
     assert_eq!(
         test_data.fcm_client.balance(&test_data.genesis_block_miner),
         1_0000000
     );
+
+    let mut new_prev_block_option: Option<Block> = None;
+    e.as_contract(&test_data.contract_client.address, || {
+        new_prev_block_option = Some(get_block(&e, &1).unwrap());
+    });
+    let new_prev_block: Block = new_prev_block_option.unwrap();
+
+    let new_hash: BytesN<32> =
+        create_block_hash(&e, &2, &message, &new_prev_block.hash, &0, &miner);
+
+    e.ledger().set_timestamp(190);
+
+    test_data
+        .contract_client
+        .mock_all_auths()
+        .mine(&new_hash, &message, &0, &miner);
+
+    // Because it took an hour to find the block, it should send 61 FCMs
+    assert_eq!(test_data.fcm_client.balance(&miner), 61_0000000i128);
 }
 
 #[test]

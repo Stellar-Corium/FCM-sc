@@ -1,3 +1,4 @@
+use core::ops::Add;
 use hex::encode;
 
 use soroban_sdk::xdr::ToXdr;
@@ -138,8 +139,22 @@ impl ReactorContractTrait for ReactorContract {
         set_block(&e, &new_attempt);
         pump_block(&e, &new_attempt.index);
 
-        // The protocol sends the last mined mineral
-        token::StellarAssetClient::new(&e, &state.fcm).mint(&prev_attempt.miner, &1_0000000);
+        // The protocol tries to send the last found amount based on time to find the block
+        match get_block(&e, &(prev_attempt.index.saturating_sub(1))) {
+            None => {
+                let _ = token::StellarAssetClient::new(&e, &state.fcm)
+                    .try_mint(&prev_attempt.miner, &1_0000000);
+            }
+            Some(block_before) => {
+                let seconds_to_find: u64 = prev_attempt
+                    .timestamp
+                    .saturating_sub(block_before.timestamp)
+                    .add(1);
+                let amount_to_send: i128 = seconds_to_find.div_ceil(60) as i128 * 1_0000000i128;
+                let _ = token::StellarAssetClient::new(&e, &state.fcm)
+                    .try_mint(&prev_attempt.miner, &amount_to_send);
+            }
+        }
 
         // We update the index to the new attempt
         state.current = new_index;

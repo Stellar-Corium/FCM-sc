@@ -11,4 +11,4 @@ jobs:
       relative_path: '["contracts/reactor"]'
       package: 'reactor'
     secrets:
-      release_token: ${{ secrets.GITHUB_TOKEN }}
+      release_token: ${{ secrets.RELEASE_TOKEN }}

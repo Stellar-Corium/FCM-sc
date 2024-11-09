@@ -8,8 +8,10 @@ use soroban_sdk::{
 
 use crate::errors::ContractErrors;
 use crate::storage::{
-    delete_stake, get_block, get_stake, get_state, pump_block, pump_core, pump_stake, set_block,
-    set_stake, set_state, Block, ReactorState, Stake,
+    delete_stake, get_attempt, get_block, get_miner_attempt, get_miner_attempt_index, get_stake,
+    get_state, pump_block, pump_core, pump_stake, set_attempt, set_block, set_miner_attempt,
+    set_miner_attempt_index, set_stake, set_state, Attempt, Block, MinerAttempt, ReactorState,
+    Stake,
 };
 
 pub const MAX_SUPPLY: u64 = 16_000_000u64;
@@ -17,6 +19,8 @@ pub const STAKING_DIVISOR: u64 = 10_000u64;
 
 pub trait ReactorContractTrait {
     fn upgrade(e: Env, hash: BytesN<32>);
+
+    fn set_difficulty(e: &Env, difficulty: u32);
 
     fn find(e: Env, fcm: Address, miner: Address, message: String);
 
@@ -37,6 +41,14 @@ impl ReactorContractTrait for ReactorContract {
     fn upgrade(e: Env, hash: BytesN<32>) {
         get_state(&e).unwrap().finder.require_auth();
         e.deployer().update_current_contract_wasm(hash);
+    }
+
+    fn set_difficulty(e: &Env, difficulty: u32) {
+        let mut state = get_state(&e).unwrap();
+        state.finder.require_auth();
+        state.difficulty = difficulty;
+        set_state(&e, &state);
+        pump_core(&e);
     }
 
     fn find(e: Env, fcm: Address, miner: Address, message: String) {
@@ -126,44 +138,68 @@ impl ReactorContractTrait for ReactorContract {
             panic_with_error!(&e, &ContractErrors::ProvidedDifficultyIsInvalid);
         }
 
-        let new_attempt: Block = Block {
-            index: new_index,
-            message,
-            prev_hash: prev_attempt.hash,
-            nonce,
-            timestamp: e.ledger().timestamp(),
-            miner,
-            hash: generated_hash,
-        };
-
-        set_block(&e, &new_attempt);
-        pump_block(&e, &new_attempt.index);
-
-        // The protocol tries to send the last found amount based on time to find the block
-        match get_block(&e, &(prev_attempt.index.saturating_sub(1))) {
-            None => {
-                let _ = token::StellarAssetClient::new(&e, &state.fcm)
-                    .try_mint(&prev_attempt.miner, &1_0000000);
-            }
-            Some(block_before) => {
-                let seconds_to_find: u64 = prev_attempt
-                    .timestamp
-                    .saturating_sub(block_before.timestamp)
-                    .add(1);
-                let amount_to_send: i128 = seconds_to_find.div_ceil(60) as i128 * 1_0000000i128;
-                let _ = token::StellarAssetClient::new(&e, &state.fcm)
-                    .try_mint(&prev_attempt.miner, &amount_to_send);
-            }
+        // We try to save the miner attempt, if there is no more space we just ignore it
+        let mut attempt: Attempt = get_attempt(&e, &(state.current + 1)).unwrap_or(Attempt {
+            block: state.current + 1,
+            total_miners: 0,
+        });
+        if attempt.total_miners < 255 {
+            if get_miner_attempt(&e, &attempt.block, &miner).is_none() {
+                attempt.total_miners += 1;
+                set_attempt(&e, &attempt.block, &attempt);
+                let miner_attempt = MinerAttempt {
+                    block: attempt.block,
+                    miner: miner.clone(),
+                    position: attempt.total_miners,
+                };
+                set_miner_attempt_index(&e, &miner_attempt);
+                set_miner_attempt(&e, &miner_attempt);
+            };
         }
 
-        // We update the index to the new attempt
-        state.current = new_index;
+        // Mutation is not enabled at the moment
+        // mutate_stake_position(&e, &state, &miner);
 
-        // If the last time a dig was performed is lower or equal to a minute ago, we increase the difficulty
-        if e.ledger().timestamp().saturating_sub(60) <= prev_attempt.timestamp {
-            state.difficulty += 1;
-        } else {
-            state.difficulty = state.difficulty.saturating_sub(1);
+        let current_block: Block = get_block(&e, &state.current).unwrap();
+
+        // If there's been 60 seconds since the last block, the block is generated
+        if e.ledger().timestamp() > (current_block.timestamp + 60) {
+            let winner_number: u32 = find_winner(&e, &attempt);
+            let winner_miner: Address =
+                get_miner_attempt_index(&e, &attempt.block, &winner_number).unwrap();
+
+            let new_attempt: Block = Block {
+                index: new_index,
+                message,
+                prev_hash: prev_attempt.hash,
+                nonce,
+                timestamp: e.ledger().timestamp(),
+                miner: winner_miner,
+                hash: generated_hash,
+            };
+
+            set_block(&e, &new_attempt);
+            pump_block(&e, &new_attempt.index);
+
+            // The protocol tries to send the last found amount based on time to find the block
+            match get_block(&e, &(prev_attempt.index.saturating_sub(1))) {
+                None => {
+                    let _ = token::StellarAssetClient::new(&e, &state.fcm)
+                        .try_mint(&prev_attempt.miner, &1_0000000);
+                }
+                Some(block_before) => {
+                    let seconds_to_find: u64 = prev_attempt
+                        .timestamp
+                        .saturating_sub(block_before.timestamp)
+                        .add(1);
+                    let amount_to_send: i128 = seconds_to_find.div_ceil(60) as i128 * 1_0000000i128;
+                    let _ = token::StellarAssetClient::new(&e, &state.fcm)
+                        .try_mint(&prev_attempt.miner, &amount_to_send);
+                }
+            }
+
+            // We update the index to the new attempt
+            state.current = new_index;
         }
 
         set_state(&e, &state);
@@ -279,4 +315,38 @@ pub fn is_difficulty_correct(hash: &BytesN<32>, difficulty: &u32) -> bool {
     }
 
     &total_zeroes == difficulty
+}
+
+// We could use prng to generate the randomness, but for now will go with this method
+// Can be changed later if we find an issue with it
+pub fn find_winner(e: &Env, attempt: &Attempt) -> u32 {
+    let mut builder: Bytes = Bytes::new(&e);
+    builder.append(&attempt.block.to_xdr(&e));
+    builder.append(&e.ledger().sequence().to_xdr(&e));
+    builder.append(&e.ledger().timestamp().to_xdr(&e));
+    builder.append(&attempt.total_miners.to_xdr(&e));
+    let hash: BytesN<32> = e.crypto().keccak256(&builder).to_bytes();
+    (hash.get(16).unwrap() as u32 % (attempt.total_miners)) + 1
+}
+
+pub fn mutate_stake_position(e: &Env, state: &ReactorState, address: &Address) {
+    let mut stake: Stake = get_stake(&e, &address).unwrap_or(Stake {
+        owner: address.clone(),
+        amount: 0,
+        cools_at: 0,
+    });
+
+    if stake.amount > 0 {
+        if e.prng().gen_range::<u64>(0..=100) < 33 {
+            token::Client::new(&e, &state.fcm)
+                .burn(&e.current_contract_address(), &(stake.amount as i128));
+            delete_stake(&e, &stake.owner);
+        } else {
+            pump_stake(&e, &stake.owner);
+            token::StellarAssetClient::new(&e, &state.fcm)
+                .mint(&e.current_contract_address(), &(stake.amount as i128));
+            stake.amount += stake.amount;
+            set_stake(&e, &stake);
+        }
+    }
 }

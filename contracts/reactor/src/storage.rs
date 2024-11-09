@@ -42,10 +42,28 @@ pub struct Stake {
 }
 
 #[contracttype]
+pub struct Attempt {
+    pub block: u64,
+    pub total_miners: u32,
+}
+
+#[contracttype]
+pub struct MinerAttempt {
+    pub block: u64,
+    pub position: u32,
+    pub miner: Address,
+}
+
+#[contracttype]
 pub enum StorageKeys {
     MineState,
     Block(u64),
     Stake(Address),
+
+    // Attempts and its related values are temporal
+    Attempt(u64),
+    MinerAttempt((u64, Address)),
+    MinerAttemptIndex((u64, u32)), // -> Address This is used to know the position of a miner in an attempt
 }
 
 pub fn pump_core(e: &Env) {
@@ -106,4 +124,51 @@ pub fn pump_stake(e: &Env, miner: &Address) {
         DAY_LEDGER * 15,
         DAY_LEDGER * 30,
     );
+}
+
+pub fn set_attempt(e: &Env, index: &u64, attempt: &Attempt) {
+    e.storage()
+        .temporary()
+        .set::<StorageKeys, Attempt>(&StorageKeys::Attempt(index.clone()), attempt);
+}
+
+pub fn get_attempt(e: &Env, index: &u64) -> Option<Attempt> {
+    e.storage()
+        .temporary()
+        .get::<StorageKeys, Attempt>(&StorageKeys::Attempt(index.clone()))
+}
+
+pub fn set_miner_attempt(e: &Env, miner_attempt: &MinerAttempt) {
+    e.storage().temporary().set::<StorageKeys, MinerAttempt>(
+        &StorageKeys::MinerAttempt((miner_attempt.block.clone(), miner_attempt.miner.clone())),
+        miner_attempt,
+    );
+}
+
+pub fn get_miner_attempt(e: &Env, block: &u64, miner: &Address) -> Option<MinerAttempt> {
+    e.storage()
+        .temporary()
+        .get::<StorageKeys, MinerAttempt>(&StorageKeys::MinerAttempt((
+            block.clone(),
+            miner.clone(),
+        )))
+}
+
+pub fn set_miner_attempt_index(e: &Env, miner_attempt: &MinerAttempt) {
+    e.storage().temporary().set::<StorageKeys, Address>(
+        &StorageKeys::MinerAttemptIndex((
+            miner_attempt.block.clone(),
+            miner_attempt.position.clone(),
+        )),
+        &miner_attempt.miner,
+    );
+}
+
+pub fn get_miner_attempt_index(e: &Env, block: &u64, position: &u32) -> Option<Address> {
+    e.storage()
+        .temporary()
+        .get::<StorageKeys, Address>(&StorageKeys::MinerAttemptIndex((
+            block.clone(),
+            position.clone(),
+        )))
 }

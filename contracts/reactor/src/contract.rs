@@ -192,7 +192,10 @@ impl ReactorContractTrait for ReactorContract {
                         .timestamp
                         .saturating_sub(block_before.timestamp)
                         .add(1);
-                    let amount_to_send: i128 = seconds_to_find.div_ceil(60) as i128 * 1_0000000i128;
+                    let mut amount_to_send: i128 = (seconds_to_find / 60) as i128 * 1_0000000i128;
+                    if amount_to_send == 0 {
+                        amount_to_send += 1_0000000i128;
+                    }
                     let _ = token::StellarAssetClient::new(&e, &state.fcm)
                         .try_mint(&prev_attempt.miner, &amount_to_send);
                 }

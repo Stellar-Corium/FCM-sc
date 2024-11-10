@@ -190,7 +190,7 @@ fn test_mining_a_block() {
     });
 
     // // Because it took an hour to find the block, it should send 61 FCMs
-    assert_eq!(test_data.fcm_client.balance(&miner), 61_0000000i128);
+    assert_eq!(test_data.fcm_client.balance(&miner), 60_0000000i128);
 }
 
 #[test]
